@@ -1,9 +1,13 @@
 // lib/authRole.ts
 import { supabase } from '@/lib/supabaseClient';
 
-type Role = 'developer' | 'evaluator';
+export type Role = 'developer' | 'evaluator';
 
-export async function ensureProfile(selectedRole?: Role) {
+type EnsureProfileResult =
+  | { ok: true; created: boolean; role: Role }
+  | { ok: false; reason: 'no-user' | 'missing-role' | 'read-error' | 'insert-error'; error?: unknown };
+
+export async function ensureProfile(selectedRole?: Role): Promise<EnsureProfileResult> {
   // must run client-side after a session exists
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { ok: false, reason: 'no-user' };
@@ -18,19 +22,13 @@ export async function ensureProfile(selectedRole?: Role) {
   if (readErr) return { ok: false, reason: 'read-error', error: readErr };
 
   if (existing) {
-    // Already has a profile row → don’t change role here
     return { ok: true, created: false, role: existing.role as Role };
   }
 
-  // New user with no profile row yet
-  // Prefer the role the user selected (on signup). If not provided, try user_metadata.role.
-  const metaRole = (user.user_metadata as any)?.role as Role | undefined;
-  const role: Role | undefined = selectedRole ?? metaRole;
-
-  if (!role) {
-    // We need them to choose a role (e.g., send them to /signup to pick)
-    return { ok: false, reason: 'missing-role' };
-  }
+  // New user: prefer an explicit selection, otherwise fall back to metadata
+  const metaRole = (user.user_metadata?.role as Role | undefined);
+  const role = selectedRole ?? metaRole;
+  if (!role) return { ok: false, reason: 'missing-role' };
 
   const { error: insertErr } = await supabase
     .from('profiles')
